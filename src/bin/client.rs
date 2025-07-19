@@ -7,6 +7,7 @@ use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use tokio::io::{self, AsyncWriteExt as _};
 use tokio::net::TcpStream;
 use hyper_util::rt::TokioIo;
+use std::process::Command;
 
 
 // A simple type alias so as to DRY.
@@ -49,6 +50,11 @@ async fn fetch_url(url: hyper::Uri) -> Result<()> {
         Some(Protocol::MPTCP),
     ).unwrap();
 
+    // Add primary if the previous test failed.
+    Command::new("./add_primary.sh").spawn()?.wait()?;
+
+    Command::new("./add_backup.sh").spawn()?.wait()?;
+
     socket.set_reuse_address(true)?;
     socket.bind(&local_addr.into())?;
     socket.connect(&addr_socket2)?;
@@ -66,27 +72,51 @@ async fn fetch_url(url: hyper::Uri) -> Result<()> {
 
     let authority = url.authority().unwrap().clone();
 
+    // First request to establish the second MPTCP path.
+    let req = Request::builder().uri("/sleep")
+            .header(hyper::header::HOST, authority.as_str())
+            .body(Empty::<Bytes>::new())?;
+
+    let res = request_sender.send_request(req).await?;
+    if res.status() != 200 {
+        return Err("Impossible to sleep".to_string().into());
+    }    
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(2)).await;
+
     let path = url.path();
     let req = Request::builder()
         .uri(path)
         .header(hyper::header::HOST, authority.as_str())
         .body(Empty::<Bytes>::new())?;
 
-    let mut res = request_sender.send_request(req).await?;
+    let res = request_sender.send_request(req);
 
+    println!("Killing the first interface");
+    Command::new("./kill_primary.sh").spawn().unwrap().wait().unwrap();
+
+    println!("Before waiting for the response");
+    let mut res = res.await?;
+    println!("After waiting for the response");
+    
     println!("Response: {}", res.status());
     println!("Headers: {:#?}\n", res.headers());
 
+    // We received the response over the other path. Activate again the WiFi interface.
+    Command::new("./add_primary.sh").spawn()?.wait()?;
+
     // Stream the body, writing each chunk to stdout as we get it
     // (instead of buffering and printing at the end).
+    let mut read = 0;
     while let Some(next) = res.frame().await {
         let frame = next?;
         if let Some(chunk) = frame.data_ref() {
-            io::stdout().write_all(chunk).await?;
+            // io::stdout().write_all(chunk).await?;
+            read += chunk.len();
         }
     }
 
-    println!("\n\nDone!");
+    println!("\n\nDone! Read {read} bytes");
 
     Ok(())
 }

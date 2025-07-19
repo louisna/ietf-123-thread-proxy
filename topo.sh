@@ -27,3 +27,11 @@ ip netns exec client ip addr add 10.1.0.2/24 dev mptcp-client-22
 
 # Add default route.
 ip netns exec client ip route add default dev mptcp-client-12
+
+# Add latency on the first path.
+tc qdisc add dev mptcp-client-11 root netem delay 2ms rate 10000mbit
+ip netns exec client tc qdisc add dev mptcp-client-12 root netem delay 2ms rate 10000mbit
+
+# Add latency and bandwidth limit on the second path.
+tc qdisc add dev mptcp-client-21 root netem delay 2ms rate 1mbit
+ip netns exec client tc qdisc add dev mptcp-client-22 root netem delay 2ms rate 1mbit

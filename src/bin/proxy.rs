@@ -4,7 +4,7 @@
 use std::net::SocketAddr;
 
 use bytes::Bytes;
-use http_body_util::{BodyExt, Empty};
+use http_body_util::BodyExt;
 use http_body_util::combinators::BoxBody;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
@@ -17,13 +17,14 @@ type ClientBuilder = hyper::client::conn::http1::Builder;
 async fn index1(
     req: Request<hyper::body::Incoming>,
 ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, hyper::Error> {
+    println!("Waiting... {:?}", req.uri());
     // Directly return 200 if /sleep.
     if req.uri() == "/sleep" {
         println!("Returning sleep");
         return Ok(Response::new(BoxBody::default()));
     }
 
-    // tokio::time::sleep(tokio::time::Duration::from_millis(2)).await;
+    tokio::time::sleep(tokio::time::Duration::from_millis(2)).await;
 
     // Here we do the proxy job.
     let server_addr: SocketAddr = "130.104.229.58:2268".parse().unwrap();
@@ -43,7 +44,7 @@ async fn index1(
     });
 
     let resp = sender.send_request(req).await?;
-    tokio::time::sleep(tokio::time::Duration::from_millis(3)).await;
+    // tokio::time::sleep(tokio::time::Duration::from_millis(3)).await;
     println!("Proxied a request!");
     Ok(resp.map(|b| b.boxed()))
 }

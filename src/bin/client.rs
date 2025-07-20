@@ -1,42 +1,42 @@
 use bytes::Bytes;
 use http_body_util::{BodyExt, Empty};
-use std::env;
 use std::net::SocketAddr;
 use hyper::Request;
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
-use tokio::io::{self, AsyncWriteExt as _};
 use tokio::net::TcpStream;
 use hyper_util::rt::TokioIo;
 use std::process::Command;
+use clap::Parser;
 
+#[derive(Parser)]
+struct Args {
+    /// URL of the server.
+    url: String,
+
+    /// Whether the client will put its link to sleep.
+    #[clap(long)]
+    sleep: bool
+}
 
 // A simple type alias so as to DRY.
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-
-    // Some simple CLI args requirements...
-    let url = match env::args().nth(1) {
-        Some(url) => url,
-        None => {
-            println!("Usage: client <url>");
-            return Ok(());
-        }
-    };
+    let args = Args::parse();
 
     // HTTPS requires picking a TLS implementation, so give a better
     // warning if the user tries to request an 'https' URL.
-    let url = url.parse::<hyper::Uri>().unwrap();
+    let url = args.url.parse::<hyper::Uri>().unwrap();
     if url.scheme_str() != Some("http") {
         println!("This example only works with 'http' URLs.");
         return Ok(());
     }
 
-    fetch_url(url).await
+    fetch_url(url, args.sleep).await
 }
 
-async fn fetch_url(url: hyper::Uri) -> Result<()> {
+async fn fetch_url(url: hyper::Uri, sleep: bool) -> Result<()> {
     let host = url.host().expect("uri has no host");
     let port = url.port_u16().unwrap_or(3000);
     let addr_str = format!("{}:{}", host, port);
@@ -92,8 +92,10 @@ async fn fetch_url(url: hyper::Uri) -> Result<()> {
 
     let res = request_sender.send_request(req);
 
-    println!("Killing the first interface");
-    Command::new("./kill_primary.sh").spawn().unwrap().wait().unwrap();
+    if sleep {
+        println!("Killing the first interface");
+        Command::new("./kill_primary.sh").spawn().unwrap().wait().unwrap();
+    }
 
     println!("Before waiting for the response");
     let mut res = res.await?;
@@ -102,8 +104,10 @@ async fn fetch_url(url: hyper::Uri) -> Result<()> {
     println!("Response: {}", res.status());
     println!("Headers: {:#?}\n", res.headers());
 
-    // We received the response over the other path. Activate again the WiFi interface.
-    Command::new("./add_primary.sh").spawn()?.wait()?;
+    if sleep {
+        // We received the response over the other path. Activate again the WiFi interface.
+        Command::new("./add_primary.sh").spawn()?.wait()?;
+    }
 
     // Stream the body, writing each chunk to stdout as we get it
     // (instead of buffering and printing at the end).
